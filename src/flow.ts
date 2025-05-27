@@ -12,13 +12,19 @@ import type { DuckDBValue } from "@duckdb/node-api";
 
 const logger = getLogger(["Dbg", "App", "Flw"]);
 
-interface MyGlobal {
-    youtubeInfo?: object;
+export type MyGlobal = {
+    youtubeInfo?: {
+        videoId?: string;
+        videoTitle?: string;
+        transcript?: string;
+        comments?: CommentData[];
+        thumbnailUrl?: string;
+    };
     videoId?: string;
-    db?: Database;
+    db: Database;
     pathSpecificData?: string;
     topics?: string;
-}
+};
 interface MyLocal {
     pathSpecificData?: string;
 }
@@ -40,24 +46,29 @@ export class ProcessYoutubeURL extends Node {
         await db.createTables();
         memory.videoId = videoId;
         memory.db = db;
-        return { videoId, db };
+
+        const videoSaved: DuckDBResultReader = await db.queryGet(
+            `   SELECT 1
+                        FROM videos
+                        WHERE id = '${videoId}';
+                    `
+        );
+        return { videoId, videoSaved, db };
     }
 
-    async exec(prepRes: any): Promise<any> {
+    async exec(prepRes: {
+        videoId: string;
+        videoSaved: DuckDBResultReader;
+        db: Database;
+    }): Promise<any> {
         if (!prepRes) {
             throw new Error("Method not implemented.");
         }
 
         logger.info`Proccesing Youtube Url ${prepRes.videoId}`;
-        const videoSaved: DuckDBResultReader = await prepRes.db.queryGet(
-            `   SELECT 1
-                        FROM videos
-                        WHERE id = '${prepRes.videoId}';
-                    `
-        );
 
         let youtubeInfo: YoutubeInfo;
-        if (videoSaved.currentRowCount !== 1) {
+        if (prepRes.videoSaved.currentRowCount !== 1) {
             youtubeInfo = await getYoutubeInfo(prepRes.videoId);
 
             await prepRes.db.insertVideo(
@@ -247,13 +258,13 @@ export class ExtractTopicsAndQuestions extends Node {
             );
 
             await memory.db.connect.run(
-                `CREATE INDEX transcripts_vector_index ON transcripts_embeddings USING HNSW (embedding)`
+                `CREATE INDEX transcripts_vector_index ON transcripts_embeddings USING HNSW (embedding);`
             );
 
             logger.info`Inserted transcript embeddings.`;
         } else {
             await memory.db.connect.run(
-                `CREATE INDEX transcripts_vector_index ON transcripts_embeddings USING HNSW (embedding)`
+                `CREATE INDEX transcripts_vector_index ON transcripts_embeddings USING HNSW (embedding);`
             );
             logger.info`Transcript embeddings have already been generated and saved.`;
         }
@@ -262,7 +273,7 @@ export class ExtractTopicsAndQuestions extends Node {
     }
 }
 
-export class CommentsProcessing extends Node {
+export class CommentsEmbedsProcessing extends Node {
     async prep(memory: Memory<MyGlobal, MyLocal>): Promise<any> {
         const transEmbedTable: DuckDBResultReader = await memory.db.queryGet(
             `SELECT commentId, textDisplay
@@ -445,8 +456,7 @@ export class SearchBatchNode extends Node<
 
     async post(
         memory: Memory<MyGlobal, MyLocal>,
-        items: DuckDBValue[][],
-        execRes: void
+        items: DuckDBValue[][]
     ): Promise<void> {
         // memory.results = new Array(items.length).fill(null); // Pre-allocate
         items.forEach((item) => {
@@ -455,5 +465,6 @@ export class SearchBatchNode extends Node<
             });
         });
         // Optional: this.trigger("aggregate");
+        memory.db.close();
     }
 }

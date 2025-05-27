@@ -14,13 +14,16 @@ import { getFileSink } from "@logtape/file";
 // import type { DuckDBResultReader } from "@duckdb/node-api/lib/DuckDBResultReader";
 // import type { YoutubeInfo } from "./comments.dto";
 import {
-    CommentsProcessing,
+    CommentsEmbedsProcessing,
+    ExtractTopicsAndQuestions,
     ProcessYoutubeURL,
     SearchBatchNode,
     TopicsSimilaritySearch,
+    type MyGlobal,
 } from "./flow";
 import { Flow, ParallelFlow } from "./pocket";
-import type { Database } from "./database";
+import { Database } from "./database";
+// import type { Database } from "./database";
 
 const logger = getLogger(["Dbg", "App", "Main"]);
 
@@ -52,34 +55,33 @@ await (async () => {
     });
 
     try {
-        interface MyGlobal {
-            youtubeInfo?: object;
-            videoId?: string;
-            db?: Database;
-            pathSpecificData?: string;
-            topics?: string;
-        }
-
-        const youtube = new ProcessYoutubeURL(
+        const youtubeUrl = new ProcessYoutubeURL(
+            // "https://www.youtube.com/watch?v=Lfr2KvIS2nY"
             "https://www.youtube.com/watch?v=mgoCr7STbh4"
         );
-        // const yaml = new ExtractTopicsAndQuestions();
-        const commentsNode = new CommentsProcessing();
-        youtube.next(commentsNode);
+        const extractTopics = new ExtractTopicsAndQuestions();
+        const commentsEmbedNode = new CommentsEmbedsProcessing();
+        youtubeUrl.next(extractTopics).next(commentsEmbedNode);
 
-        const preProccessFlow = new Flow(youtube);
+        const preProccessFlow = new Flow(youtubeUrl);
 
         const triggerSearchBatch = new SearchBatchNode();
         const topicsSimilaritySearch = new TopicsSimilaritySearch();
         triggerSearchBatch.on("process_one", topicsSimilaritySearch);
 
-        const parallelBatchFlow = new ParallelFlow<MyGlobal>(
-            triggerSearchBatch
-        );
+        const parallelBatchFlow = new ParallelFlow(triggerSearchBatch, {
+            maxVisits: 5000000,
+        });
+
         preProccessFlow.next(parallelBatchFlow);
 
-        const memory: MyGlobal = {};
-        await preProccessFlow.run(memory);
+        // Create the master flow, starting with the paymentFlow
+        const masterPipeline = new Flow(preProccessFlow);
+
+        const memory: MyGlobal = {
+            db: await Database.create(),
+        };
+        await masterPipeline.run(memory);
     } catch (error) {
         logger.error`Error: ${error}`;
     }

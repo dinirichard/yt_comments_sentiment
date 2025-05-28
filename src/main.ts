@@ -15,7 +15,10 @@ import { getFileSink } from "@logtape/file";
 // import type { YoutubeInfo } from "./comments.dto";
 import {
     CommentsEmbedsProcessing,
+    ContentBatch,
     ExtractTopicsAndQuestions,
+    GenerateHTML,
+    ProcessContent,
     ProcessYoutubeURL,
     SearchBatchNode,
     TopicsSimilaritySearch,
@@ -54,10 +57,12 @@ await (async () => {
         ],
     });
 
+    const db = await Database.create();
+
     try {
         const youtubeUrl = new ProcessYoutubeURL(
-            // "https://www.youtube.com/watch?v=Lfr2KvIS2nY"
-            "https://www.youtube.com/watch?v=mgoCr7STbh4"
+            "https://www.youtube.com/watch?v=Lfr2KvIS2nY"
+            // "https://www.youtube.com/watch?v=mgoCr7STbh4"
         );
         const extractTopics = new ExtractTopicsAndQuestions();
         const commentsEmbedNode = new CommentsEmbedsProcessing();
@@ -65,6 +70,7 @@ await (async () => {
 
         const preProccessFlow = new Flow(youtubeUrl);
 
+        // * Similarity Search Flow
         const triggerSearchBatch = new SearchBatchNode();
         const topicsSimilaritySearch = new TopicsSimilaritySearch();
         triggerSearchBatch.on("process_one", topicsSimilaritySearch);
@@ -73,17 +79,37 @@ await (async () => {
             maxVisits: 5000000,
         });
 
+        // * Content Processing Flow
+        const contentBatch = new ContentBatch();
+        const contentProcessing = new ProcessContent();
+        contentBatch.on("process_one", contentProcessing);
+
+        const contentBatchFlow = new ParallelFlow(contentBatch, {
+            maxVisits: 5000000,
+        });
+
+        // * Post Processing Flow
+        const htmlNode = new GenerateHTML();
+        const postProccessFlow = new Flow(htmlNode);
+
+        // * Link Flows
         preProccessFlow.next(parallelBatchFlow);
+        parallelBatchFlow.next(contentBatchFlow);
+        contentBatchFlow.next(postProccessFlow);
 
         // Create the master flow, starting with the paymentFlow
         const masterPipeline = new Flow(preProccessFlow);
 
         const memory: MyGlobal = {
-            db: await Database.create(),
+            db,
         };
         await masterPipeline.run(memory);
+
+        db.close();
     } catch (error) {
+        db.close();
         logger.error`Error: ${error}`;
+        //TODO YAMLParseError is same as llm response error
     }
 
     console.log("App shutdown");

@@ -155,7 +155,7 @@ export function htmlGenerator(
     VideoTitle: string,
     imageUrl: string,
     videoId: string,
-    sections: Section[]
+    topicSections: ProcessedTopicResult[]
 ): string {
     // Start building the HTML using template literals
     let htmlTemplate = `
@@ -231,9 +231,9 @@ export function htmlGenerator(
                 />`;
 
     // For each section, add a sub-title (Title 2, etc.) and bullet points.
-    for (const section of sections) {
-        const sectionTitle = section.title || ""; // Use default empty string if title is missing
-        const bullets = section.questions || []; // Use default empty array if bullets are missing
+    for (const section of topicSections) {
+        const sectionTitle = section.rephrasedTitle || section.title; // Use default empty string if title is missing
+        const bullets = section.questions; // Use default empty array if bullets are missing
 
         // Add the section's title (Title 2, Title 3, etc.)
         htmlTemplate += `
@@ -241,11 +241,11 @@ export function htmlGenerator(
                 <ul class="text-gray-600">`;
 
         // Create list items for each bullet pair
-        for (const [boldText, normalText] of bullets) {
+        for (let i = 0; i < bullets.length; i++) {
             htmlTemplate += `
                     <li>
-                        <strong>${boldText}</strong><br />
-                        <div class="bullet-content">${normalText}</div>
+                        <strong aria-label="${bullets[i].original}">${bullets[i].rephrased}</strong><br />
+                        <div class="bullet-content">${bullets[i].answer}</div>
                     </li>`;
         }
         htmlTemplate += `

@@ -55,6 +55,7 @@ export class Database {
                     id              VARCHAR not null PRIMARY KEY,
                     title           VARCHAR,
                     thumbnailUrl    VARCHAR,
+                    htmlSummary     VARCHAR,
                 );
             `);
 
@@ -117,7 +118,7 @@ export class Database {
         try {
             await this.connect.run(
                 `
-                insert into videos
+                insert into videos ( id, title, thumbnailUrl)
                     values (?, ?, ?);
             `,
                 [videoId, videoTitle, thumbnailUrl]

@@ -6,7 +6,11 @@ import type { DuckDBResultReader } from "@duckdb/node-api/lib/DuckDBResultReader
 import { getYoutubeInfo } from "./google.auth";
 import type { CommentData, YoutubeInfo } from "./comments.dto";
 import yaml from "yaml";
-import { createBatchEmbeddings } from "./utils";
+import {
+    createBatchEmbeddings,
+    type ProcessedTopicResult,
+    type Section,
+} from "./utils";
 import type { ContentEmbedding } from "@google/generative-ai";
 import type { DuckDBValue } from "@duckdb/node-api";
 
@@ -23,16 +27,14 @@ export type MyGlobal = {
     videoId?: string;
     db: Database;
     pathSpecificData?: string;
-    topics?: string;
+    topics?: any[];
+    commentsTopicMatch?: any[];
 };
 interface MyLocal {
     pathSpecificData?: string;
 }
 
 export class ProcessYoutubeURL extends Node {
-    // protected execRunner(memory: Memory<SharedStore, SharedStore>, prepRes: any): Promise<any> {
-    //     throw new Error("Method not implemented.");
-    // }
     private url: string;
     constructor(url: string) {
         super();
@@ -42,12 +44,11 @@ export class ProcessYoutubeURL extends Node {
     async prep(memory: Memory<MyGlobal, MyLocal>): Promise<any> {
         logger.info`Setup database and process youtube url for video Id.`;
         const videoId = utils.retrieveVideoId(this.url);
-        const db = await Database.create();
-        await db.createTables();
+        await memory.db.createTables();
         memory.videoId = videoId;
-        memory.db = db;
+        const db: Database = memory.db;
 
-        const videoSaved: DuckDBResultReader = await db.queryGet(
+        const videoSaved: DuckDBResultReader = await memory.db.queryGet(
             `   SELECT 1
                         FROM videos
                         WHERE id = '${videoId}';
@@ -182,7 +183,7 @@ export class ExtractTopicsAndQuestions extends Node {
         const yamlContent = utils.extractYamlContent(response);
 
         const parsed = yaml.parse(yamlContent);
-        logger.debug`Parsed yaml: ${parsed}`;
+        logger.debug`Parsed yaml: ${JSON.stringify(parsed)}`;
         const parentChild: string[] = [];
         parsed.topics.forEach(
             (element: { title: string; questions: string[] }) => {
@@ -195,7 +196,7 @@ export class ExtractTopicsAndQuestions extends Node {
 
         const transcriptEmbeddings: ContentEmbedding[] =
             await createBatchEmbeddings(parentChild);
-        logger.debug`Parsed yaml: ${parentChild}`;
+        logger.debug`ParentChild comments list: ${parentChild}`;
         return { parsed, parentChild, transcriptEmbeddings };
     }
 
@@ -218,54 +219,74 @@ export class ExtractTopicsAndQuestions extends Node {
         logger.debug`transEmbedTable: ${transEmbedTable}`;
 
         if (transEmbedTable.currentRowCount === 0) {
-            let parentIndex = 0;
-            await execRes.parsed.topics.forEach(
-                async (element: { title: string; questions: string[] }) => {
-                    const titleId = utils.makeId(11);
-                    parentIndex++;
+            let embeddingIndex = 0;
+            for (const element of execRes.parsed.topics) {
+                const titleId = utils.makeId(11);
+                // Assuming the embedding for the title is at the current embeddingIndex
+                if (embeddingIndex >= execRes.transcriptEmbeddings.length) {
+                    console.error(
+                        "Ran out of embeddings for title:",
+                        element.title
+                    );
+                    continue; // Or handle error appropriately
+                }
+                const titleEmbedding =
+                    execRes.transcriptEmbeddings[embeddingIndex];
+                embeddingIndex++;
+
+                await memory.db.connect.run(
+                    `
+                    insert into transcripts_embeddings (id, videoId, text, embedding)
+                        values (?, ?, ?, list_value(${titleEmbedding.values.map(() => "?").join(", ")}));
+                    `,
+                    [
+                        titleId,
+                        memory.videoId as string,
+                        element.title,
+                        ...titleEmbedding.values,
+                    ]
+                );
+
+                for (const question of element.questions) {
+                    const questionId = utils.makeId(11);
+                    // Assuming the embedding for the question is at the current embeddingIndex
+                    if (embeddingIndex >= execRes.transcriptEmbeddings.length) {
+                        console.error(
+                            "Ran out of embeddings for question:",
+                            question
+                        );
+                        continue; // Or handle error appropriately
+                    }
+                    const questionEmbedding =
+                        execRes.transcriptEmbeddings[embeddingIndex];
+                    embeddingIndex++;
+
                     await memory.db.connect.run(
                         `
-                        insert into transcripts_embeddings (id, videoId, text, embedding)
-                            values (?, ?, ?, list_value(${execRes.transcriptEmbeddings[parentIndex - 1].values.map(() => "?").join(", ")}));
+                        insert into transcripts_embeddings (id, videoId, parentId, text, embedding)
+                            values (?, ?, ?, ?, list_value(${questionEmbedding.values.map(() => "?").join(", ")}));
                         `,
                         [
-                            titleId,
+                            `${titleId}.${questionId}`, // Ensured id is unique
                             memory.videoId as string,
-                            element.title,
-                            ...execRes.transcriptEmbeddings[parentIndex - 1]
-                                .values,
+                            titleId,
+                            question,
+                            ...questionEmbedding.values,
                         ]
                     );
-                    element.questions.forEach(async (question) => {
-                        parentIndex++;
-                        const questionId = utils.makeId(11);
-                        await memory.db.connect.run(
-                            `
-                            insert into transcripts_embeddings (id, videoId, parentId, text, embedding)
-                                values (?, ?, ?, ?, list_value(${execRes.transcriptEmbeddings[parentIndex - 1].values.map(() => "?").join(", ")}));
-                            `,
-                            [
-                                titleId + "." + questionId,
-                                memory.videoId as string,
-                                titleId,
-                                question,
-                                ...execRes.transcriptEmbeddings[parentIndex - 1]
-                                    .values,
-                            ]
-                        );
-                    });
                 }
+            }
+
+            await memory.db.connect.run(
+                `DROP INDEX IF EXISTS transcripts_vector_index;`
             );
 
             await memory.db.connect.run(
-                `CREATE INDEX transcripts_vector_index ON transcripts_embeddings USING HNSW (embedding);`
+                `CREATE INDEX IF NOT EXISTS transcripts_vector_index ON transcripts_embeddings USING HNSW (embedding) WITH (metric = 'cosine');`
             );
 
             logger.info`Inserted transcript embeddings.`;
         } else {
-            await memory.db.connect.run(
-                `CREATE INDEX transcripts_vector_index ON transcripts_embeddings USING HNSW (embedding);`
-            );
             logger.info`Transcript embeddings have already been generated and saved.`;
         }
 
@@ -275,6 +296,7 @@ export class ExtractTopicsAndQuestions extends Node {
 
 export class CommentsEmbedsProcessing extends Node {
     async prep(memory: Memory<MyGlobal, MyLocal>): Promise<any> {
+        logger.info`Starting  transcript embeddings.`;
         const transEmbedTable: DuckDBResultReader = await memory.db.queryGet(
             `SELECT commentId, textDisplay
                     FROM comments
@@ -283,6 +305,7 @@ export class CommentsEmbedsProcessing extends Node {
         );
 
         const parentComments = transEmbedTable.getRows();
+        logger.debug`comments length: ${parentComments.length}`;
         const yamlOutput = [];
 
         for (const parent of parentComments) {
@@ -348,9 +371,9 @@ export class CommentsEmbedsProcessing extends Node {
         return commentEmbeddings;
     }
     async post(
+        memory: Memory<MyGlobal, MyLocal>,
         prepRes: any,
-        execRes: ContentEmbedding[],
-        memory: Memory<MyGlobal, MyLocal>
+        execRes: ContentEmbedding[]
     ): Promise<void> {
         if (prepRes.embeddExists > 0) {
             logger.info`Comments embeddings have already been generated and saved.`;
@@ -363,8 +386,7 @@ export class CommentsEmbedsProcessing extends Node {
                     yaml.stringify(comments)
             );
             await memory.db.connect.run(
-                `
-                            insert into comments_embeddings (videoId, commentId, text, embedding)
+                `           insert into comments_embeddings (videoId, commentId, text, embedding)
                                 values (?, ?, ?, list_value(${execRes[i].values.map(() => "?").join(", ")}));
                             `,
                 [
@@ -374,6 +396,14 @@ export class CommentsEmbedsProcessing extends Node {
                     ...execRes[i].values,
                 ]
             );
+
+            await memory.db.connect.run(
+                `DROP INDEX IF EXISTS comments_vector_index;`
+            );
+
+            await memory.db.connect.run(
+                `CREATE INDEX IF NOT EXISTS comments_vector_index ON comments_embeddings USING HNSW (embedding) WITH (metric = 'cosine');`
+            );
         }
         this.trigger(DEFAULT_ACTION);
     }
@@ -381,8 +411,8 @@ export class CommentsEmbedsProcessing extends Node {
 
 export class TopicsSimilaritySearch extends Node<MyGlobal, MyLocal> {
     async prep(memory: Memory<MyGlobal, MyLocal>): Promise<any> {
-        logger.info`Comments embeddings have already been generated and saved.`;
-        logger.debug`Flow Params: \n${memory.item_data[0]} : ${memory.item_data[2]}`;
+        // logger.info`TopicsSimilaritySearch begins.`;
+        // logger.debug`Flow Params: \n${memory.item_data[0]} : ${memory.item_data[2]}`;
 
         const commentsTopicsMatch: DuckDBResultReader =
             await memory.db.queryGet(
@@ -390,8 +420,8 @@ export class TopicsSimilaritySearch extends Node<MyGlobal, MyLocal> {
                     SELECT id, parentId, text, embedding
                     FROM transcripts_embeddings
                     WHERE videoId = '${memory.videoId}'
-                    ORDER BY array_distance(embedding::FLOAT[768], ARRAY[${memory.item_data[1].items}]::FLOAT[768])
-                    LIMIT 1;
+                    ORDER BY array_cosine_distance(embedding::FLOAT[768], ARRAY[${memory.item_data[1].items}]::FLOAT[768])
+                    LIMIT ${memory.vssLimit};
             `
             );
 
@@ -410,12 +440,14 @@ export class TopicsSimilaritySearch extends Node<MyGlobal, MyLocal> {
             commentText: memory.item_data[2],
         };
     }
-    async exec(prepRes: any): Promise<{ similarTopics: any; commentId: any }> {
-        return Promise.resolve({
+    async exec(
+        prepRes: any
+    ): Promise<{ similarTopics: any; commentId: any; commentText: any }> {
+        return {
             similarTopics: prepRes.commentsTopics,
             commentId: prepRes.commentId,
             commentText: prepRes.commentText,
-        });
+        };
     }
 
     async post(
@@ -423,9 +455,8 @@ export class TopicsSimilaritySearch extends Node<MyGlobal, MyLocal> {
         prepRes: any,
         execRes: any
     ): Promise<void> {
-        memory.commentsTopicMatch = [...memory.commentsTopicMatch, execRes];
-        logger.debug`Combined Result: ${execRes}`;
-        this.trigger(DEFAULT_ACTION);
+        memory.commentsTopicMatch[memory.item_index] = execRes;
+        // logger.debug`Combined Result: ${execRes}`;
     }
 }
 
@@ -458,13 +489,212 @@ export class SearchBatchNode extends Node<
         memory: Memory<MyGlobal, MyLocal>,
         items: DuckDBValue[][]
     ): Promise<void> {
-        // memory.results = new Array(items.length).fill(null); // Pre-allocate
-        items.forEach((item) => {
+        logger.info`TopicsSimilaritySearch begins.`;
+        const vssLimit = 1;
+        memory.commentsTopicMatch = new Array(items.length).fill(null); // Pre-allocate
+        items.forEach((item, index) => {
             this.trigger("process_one", {
                 item_data: item,
+                item_index: index,
+                vssLimit,
             });
         });
-        // Optional: this.trigger("aggregate");
-        memory.db.close();
+    }
+}
+
+export class ContentBatch extends Node<
+    MyGlobal,
+    MyLocal,
+    ["process_one", "aggregate"]
+> {
+    async prep(memory: Memory<MyGlobal, MyLocal>): Promise<any[]> {
+        // There is no way this would complete in 3 seconds without concurrency
+        logger.info`ContentBatchFlow creating topics and questions batches.`;
+        const transEmbedTable: DuckDBResultReader = await memory.db.queryGet(
+            `SELECT id, parentId, text
+                    FROM transcripts_embeddings
+                    WHERE videoId = '${memory.videoId}';
+            `
+        );
+
+        const allPoints = transEmbedTable.getRows();
+        const sections: utils.Section[] = [];
+
+        for (const topic of allPoints) {
+            if (topic[1] !== null) {
+                continue;
+            }
+            const section: utils.Section = {
+                title: topic[2] as string,
+                questions: [],
+            };
+
+            for (const question of allPoints) {
+                if (question[1] === null || topic[0] !== question[1]) {
+                    continue;
+                }
+                section.questions.push([question[2] as string, ""]);
+            }
+            sections.push(section);
+        }
+        // logger.debug`Sections : ${sections}`;
+
+        return sections;
+    }
+
+    async post(
+        memory: Memory<MyGlobal, MyLocal>,
+        prepResList: Section[]
+    ): Promise<void> {
+        memory.topics = new Array(prepResList.length).fill(null);
+        memory.local.topic = new Array(prepResList.length).fill(null);
+
+        prepResList.forEach((section, index) => {
+            this.trigger("process_one", {
+                section_data: section,
+                section_index: index,
+            });
+        });
+    }
+}
+
+export class ProcessContent extends Node<MyGlobal, MyLocal> {
+    async prep(memory: Memory<MyGlobal, MyLocal>): Promise<any> {
+        logger.debug`ProcessContent prep Result 1: ${memory.section_data}`;
+        const topicTitle: string = memory.section_data.title;
+        // Extract only the original question strings from the input
+        const originalQuestions = memory.section_data.questions.map(
+            (q: string[]) => q[0]
+        );
+
+        const prompt: string = `You simplify and clarify content. Given a topic and questions from a YouTube video, refine the topic title and questions for clarity, and provide easy-to-understand explanations using the transcript.
+
+            TOPIC: ${topicTitle}
+
+            QUESTIONS:
+            ${originalQuestions.map((q: string) => `- ${q}`).join("\n")}
+
+            TRANSCRIPT EXCERPT:
+            ${memory.youtubeInfo.transcript}
+
+            For topic title and questions:
+            1. Keep them catchy and interesting, but short
+
+            For your answers:
+            1. Format them using HTML with <b> and <i> tags for highlighting. 
+            2. Prefer lists with <ol> and <li> tags. Ideally, <li> followed by <b> for the key points.
+            3. Quote important keywords but explain them in easy-to-understand language (e.g., "<b>Quantum computing</b> is like having a super-fast magical calculator")
+            4. Keep answers interesting but short
+
+            Format your response in YAML:
+
+            \`\`\`yaml
+            rephrasedTitle: |
+                Interesting topic title in 10 words
+            questions:
+              - original: |
+                    ${originalQuestions.length > 0 ? originalQuestions[0] : ""}
+                rephrased: |
+                    Interesting question in 15 words
+                answer: |
+                    Simple answer that are easy-to-understand in 100 words
+              - original: |
+                    ${originalQuestions.length > 1 ? originalQuestions[1] : ""}
+                rephrased: |
+                    Interesting question in 15 words
+                answer: |
+                    Simple answer that are easy-to-understand in 100 words
+            # ... add more placeholders dynamically or adjust instructions if needed ...
+            \`\`\`
+            `;
+
+        // logger.debug`llm response: ${prompt}`;
+
+        return [prompt, topicTitle, memory.section_index];
+    }
+    async exec(prepRes: [string, string, number]): Promise<any> {
+        const response = await utils.callLLM(prepRes[0]);
+        // logger.debug`llm response: ${response}`;
+        const yamlContent = utils.extractYamlContent(response);
+
+        const parsed = yaml.parse(yamlContent);
+        // logger.debug`Parsed yaml: ${parsed}`;
+
+        const result = {
+            title: prepRes[1], // Keep original title for mapping back
+            rephrasedTitle: parsed.rephrasedTitle,
+            questions: parsed.questions,
+        };
+
+        return result;
+    }
+
+    async post(
+        memory: Memory<MyGlobal, MyLocal>,
+        prepRes: any,
+        execRes: any
+    ): Promise<void> {
+        memory.topics[prepRes[2]] = execRes;
+        memory.local.topic[prepRes[2]] = execRes;
+        // logger.debug`ProcessContent Result: ${memory.topics}`;
+        // throw new Error("Method not implemented.");
+        this.trigger(DEFAULT_ACTION, { topics: memory.local.topic });
+    }
+}
+
+export class GenerateHTML extends Node<MyGlobal, MyLocal> {
+    async prep(memory: Memory<MyGlobal, MyLocal>): Promise<any> {
+        logger.info`GenerateHTML generating and saving HTML file.`;
+        logger.debug`GenerateHTML Mem Topics : ${memory.topics}`;
+        return [
+            memory.youtubeInfo.videoTitle,
+            memory.youtubeInfo.thumbnailUrl,
+            memory.videoId,
+            memory.topics,
+        ];
+    }
+    async exec(prepRes: any[]): Promise<string> {
+        const htmlContent = utils.htmlGenerator(
+            prepRes[0],
+            prepRes[1],
+            prepRes[2],
+            prepRes[3] as ProcessedTopicResult[]
+        );
+
+        logger.debug`HTML content : \n${htmlContent}`;
+        return htmlContent;
+    }
+
+    async post(
+        memory: Memory<MyGlobal, MyLocal>,
+        prepRes: any[],
+        execRes: string
+    ): Promise<void> {
+        await memory.db.connect.run(
+            `
+                UPDATE videos
+                    SET htmlSummary = ?
+                    WHERE id = '${memory.videoId}';
+            `,
+            [execRes]
+        );
+
+        let videoTitle: string = prepRes[0];
+        videoTitle = videoTitle.replaceAll(" ", "_");
+        const htmlFile = Bun.file(`./summaries/${videoTitle}.html`);
+        logger.debug`Writting html summary to file: ${videoTitle}.html`;
+        // pdfPath = job.resumePath;
+        try {
+            if (!(await htmlFile.exists())) {
+                await Bun.write(`./summaries/${videoTitle}.html`, execRes);
+                logger.debug`Job data written to new file: ${videoTitle}.html`;
+            } else {
+                await Bun.write(htmlFile, execRes);
+            }
+        } catch (error) {
+            logger.error`Error parsing into HTML file. ${error}`;
+        }
+
+        this.trigger(DEFAULT_ACTION);
     }
 }

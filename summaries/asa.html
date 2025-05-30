@@ -1,0 +1,368 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Youtube Made Simple</title>
+        <!-- Using Tailwind CSS CDN -->
+        <link
+            rel="stylesheet"
+            href="https://unpkg.com/tailwindcss@2.2.19/dist/tailwind.min.css"
+        />
+        <!-- Google Font for a handwriting style -->
+        <link rel="preconnect" href="https://fonts.gstatic.com" />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Patrick+Hand&display=swap"
+            rel="stylesheet"
+        />
+        <script
+            defer
+            src="https://cdn.jsdelivr.net/npm/@alpinejs/focus@3.x.x/dist/cdn.min.js"
+        ></script>
+        <script
+            defer
+            src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"
+        ></script>
+        <style>
+            body {
+                background-color: #f7fafc; /* bg-gray-100 */
+                font-family: "Patrick Hand", sans-serif;
+            }
+            h1,
+            h2 {
+                font-weight: 700; /* font-bold equivalent */
+                margin-bottom: 0.5rem; /* mb-2 */
+            }
+            ul {
+                list-style-type: disc;
+                margin-left: 1.5rem; /* ml-6 */
+                margin-bottom: 1.5rem; /* mb-6 */
+            }
+            li {
+                margin-bottom: 1rem; /* mb-4 */
+            }
+            ol {
+                list-style-type: decimal;
+                margin-left: 2rem; /* ml-8 */
+                margin-top: 0.5rem; /* mt-2 */
+            }
+            ol li {
+                margin-bottom: 0.2rem; /* Adjust as needed */
+            }
+            .bullet-content ol {
+                margin-top: 0.3rem; /* Adjust as needed */
+                margin-bottom: 0.3rem; /* Adjust as needed */
+                padding-left: 0.3rem;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="w-fullbg-white rounded-lg border p-1 md:p-3 m-10">
+            <div class="divide-y divide-slate-200">
+                <!-- Accordion item -->
+                <!-- <div x-data="{ expanded: false }" class="py-2">
+                    <h2>
+                        <button
+                            id="faqs-title-01"
+                            type="button"
+                            class="flex items-center justify-between w-full text-left font-semibold py-2"
+                            @click="expanded = !expanded"
+                            :aria-expanded="expanded"
+                            aria-controls="faqs-text-01"
+                        >
+                            <span
+                                >What are the advantages of your service?</span
+                            >
+                            <svg
+                                class="fill-indigo-500 shrink-0 ml-8"
+                                width="16"
+                                height="16"
+                                xmlns="http://www.w3.org/2000/svg"
+                            >
+                                <rect
+                                    y="7"
+                                    width="16"
+                                    height="2"
+                                    rx="1"
+                                    class="transform origin-center transition duration-200 ease-out"
+                                    :class="{'!rotate-180': expanded}"
+                                />
+                                <rect
+                                    y="7"
+                                    width="16"
+                                    height="2"
+                                    rx="1"
+                                    class="transform origin-center rotate-90 transition duration-200 ease-out"
+                                    :class="{'!rotate-180': expanded}"
+                                />
+                            </svg>
+                        </button>
+                    </h2>
+                    <div
+                        id="faqs-text-01"
+                        role="region"
+                        aria-labelledby="faqs-title-01"
+                        class="grid text-sm text-slate-600 overflow-hidden transition-all duration-300 ease-in-out"
+                        :class="expanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'"
+                    >
+                        <div class="overflow-hidden">
+                            <p class="pb-3">
+                                If you go over your organisations or user limit,
+                                a member of the team will reach out about
+                                bespoke pricing. In the meantime, our
+                                collaborative features won't appear in accounts
+                                or users that are over the 100-account or
+                                1,000-user limit.
+                            </p>
+                        </div>
+                    </div>
+                </div> -->
+
+                <div class="flex flex-col p-4">
+                    <!-- Accordion Container -->
+                    <div x-data="{ open: true }">
+                        <div
+                            @click="open = !open"
+                            class="flex items-center justify-between bg-gray-200 border p-4"
+                        >
+                            <p>Container 1</p>
+                            <span
+                                :class="open ? 'fa-chevron-down' : 'fa-chevron-up'"
+                                class="fas"
+                            ></span>
+                        </div>
+                        <div
+                            x-show.transition.in.duration.800ms="open"
+                            class="border p-4"
+                        >
+                            Lorem ipsum dolor sit amet, consectetur adipiscing
+                            elit. Aliquam varius vel magna lacinia mollis. Class
+                            aptent taciti sociosqu ad litora torquent per
+                            conubia nostra, per inceptos himenaeos. Quisque
+                            ligula neque, imperdiet nec est laoreet, pulvinar
+                            commodo odio. Vivamus eget eleifend libero. Fusce
+                            dolor nibh, porta eu gravida ut, maximus non erat.
+                        </div>
+                    </div>
+                    <!-- Accordion Container -->
+                    <div x-data="{ open: false }">
+                        <div
+                            @click="open = !open"
+                            class="flex items-center justify-between bg-gray-200 border p-4"
+                        >
+                            <p>Container 2</p>
+                            <span
+                                :class="open ? 'fa-chevron-down' : 'fa-chevron-up'"
+                                class="fas"
+                            ></span>
+                        </div>
+                        <div
+                            x-show.transition.in.duration.800ms="open"
+                            class="border p-4"
+                        >
+                            Lorem ipsum dolor sit amet, consectetur adipiscing
+                            elit. Aliquam varius vel magna lacinia mollis. Class
+                            aptent taciti sociosqu ad litora torquent per
+                            conubia nostra, per inceptos himenaeos. Quisque
+                            ligula neque, imperdiet nec est laoreet, pulvinar
+                            commodo odio. Vivamus eget eleifend libero. Fusce
+                            dolor nibh, porta eu gravida ut, maximus non erat.
+                        </div>
+                    </div>
+                    <!-- Accordion Container -->
+                    <div x-data="{ open: false }">
+                        <div
+                            @click="open = !open"
+                            class="flex items-center justify-between bg-gray-200 border p-4"
+                        >
+                            <p>Container 3</p>
+                            <span
+                                :class="open ? 'fa-chevron-down' : 'fa-chevron-up'"
+                                class="fas"
+                            ></span>
+                        </div>
+                        <div
+                            x-show.transition.in.duration.800ms="open"
+                            class="border p-4"
+                        >
+                            <div>
+                                <h3 class="font-semibold p-1">Discussion</h3>
+                                <div class="flex flex-col gap-5 m-3">
+                                    <!-- Comment Container -->
+                                    <div x-data="{ open: false }">
+                                        <div
+                                            class="flex w-full justify-between border rounded-md"
+                                        >
+                                            <div class="p-3">
+                                                <div
+                                                    class="flex gap-3 items-center"
+                                                >
+                                                    <img
+                                                        src="https://avatars.githubusercontent.com/u/22263436?v=4"
+                                                        class="object-cover w-10 h-10 rounded-full border-2 border-emerald-400 shadow-emerald-400"
+                                                    />
+                                                    <h3 class="font-bold">
+                                                        User 1
+                                                        <br />
+                                                        <span
+                                                            class="text-sm text-gray-400 font-normal"
+                                                            >Level 1</span
+                                                        >
+                                                    </h3>
+                                                </div>
+                                                <p class="text-gray-600 mt-2">
+                                                    this is sample commnent
+                                                </p>
+                                                <button
+                                                    @click="open = !open"
+                                                    class="text-right text-blue-500"
+                                                >
+                                                    Replies
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <div
+                                            x-show.transition.in.duration.800ms="open"
+                                        >
+                                            <!-- Reply Container  -->
+                                            <div
+                                                class="text-gray-300 font-bold pl-14"
+                                            >
+                                                |
+                                            </div>
+                                            <div
+                                                class="flex justify-between border ml-5 rounded-md"
+                                            >
+                                                <div class="p-3">
+                                                    <div
+                                                        class="flex gap-3 items-center"
+                                                    >
+                                                        <img
+                                                            src="https://avatars.githubusercontent.com/u/22263436?v=4"
+                                                            class="object-cover w-10 h-10 rounded-full border-2 border-emerald-400 shadow-emerald-400"
+                                                        />
+                                                        <h3 class="font-bold">
+                                                            User 2
+                                                            <br />
+                                                            <span
+                                                                class="text-sm text-gray-400 font-normal"
+                                                                >Level 1</span
+                                                            >
+                                                        </h3>
+                                                    </div>
+                                                    <p
+                                                        class="text-gray-600 mt-2"
+                                                    >
+                                                        this is sample commnent
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <!-- END Reply Container  -->
+                                        </div>
+                                    </div>
+                                    <!-- END Comment Container  -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <h3 class="font-semibold p-1">Discussion</h3>
+                <div class="flex flex-col gap-5 m-3">
+                    <!-- Comment Container -->
+                    <div x-data="{ open: false }">
+                        <div
+                            class="flex w-full justify-between border rounded-md"
+                        >
+                            <div class="p-3">
+                                <div class="flex gap-3 items-center">
+                                    <img
+                                        src="https://avatars.githubusercontent.com/u/22263436?v=4"
+                                        class="object-cover w-10 h-10 rounded-full border-2 border-emerald-400 shadow-emerald-400"
+                                    />
+                                    <h3 class="font-bold">
+                                        User 1
+                                        <br />
+                                        <span
+                                            class="text-sm text-gray-400 font-normal"
+                                            >Level 1</span
+                                        >
+                                    </h3>
+                                </div>
+                                <p class="text-gray-600 mt-2">
+                                    this is sample commnent
+                                </p>
+                                <button
+                                    @click="open = !open"
+                                    class="text-right text-blue-500"
+                                >
+                                    Replies
+                                </button>
+                            </div>
+                        </div>
+
+                        <div x-show.transition.in.duration.800ms="open">
+                            <!-- Reply Container  -->
+                            <div class="text-gray-300 font-bold pl-14">|</div>
+                            <div
+                                class="flex justify-between border ml-5 rounded-md"
+                            >
+                                <div class="p-3">
+                                    <div class="flex gap-3 items-center">
+                                        <img
+                                            src="https://avatars.githubusercontent.com/u/22263436?v=4"
+                                            class="object-cover w-10 h-10 rounded-full border-2 border-emerald-400 shadow-emerald-400"
+                                        />
+                                        <h3 class="font-bold">
+                                            User 2
+                                            <br />
+                                            <span
+                                                class="text-sm text-gray-400 font-normal"
+                                                >Level 1</span
+                                            >
+                                        </h3>
+                                    </div>
+                                    <p class="text-gray-600 mt-2">
+                                        this is sample commnent
+                                    </p>
+                                </div>
+                            </div>
+                            <!-- END Reply Container  -->
+
+                            <!-- Reply Container  -->
+                            <div class="text-gray-300 font-bold pl-14">|</div>
+                            <div
+                                class="flex justify-between border ml-5 rounded-md"
+                            >
+                                <div class="p-3">
+                                    <div class="flex gap-3 items-center">
+                                        <img
+                                            src="https://avatars.githubusercontent.com/u/22263436?v=4"
+                                            class="object-cover w-10 h-10 rounded-full border-2 border-emerald-400 shadow-emerald-400"
+                                        />
+                                        <h3 class="font-bold">
+                                            User 3
+                                            <br />
+                                            <span
+                                                class="text-sm text-gray-400 font-normal"
+                                                >Level 1</span
+                                            >
+                                        </h3>
+                                    </div>
+                                    <p class="text-gray-600 mt-2">
+                                        this is sample commnent
+                                    </p>
+                                </div>
+                            </div>
+                            <!-- END Reply Container  -->
+                        </div>
+                    </div>
+                    <!-- END Comment Container  -->
+                </div>
+            </div>
+        </div>
+    </body>
+</html>

@@ -402,7 +402,7 @@ export class Flow<
                     action,
                     await this.runNodes(nextNodes, nodeMemory),
                 ]);
-            } else {
+            } else if ((clonedNode as any).triggers.length) {
                 // If the sub-node triggered an action that has no successors, that action becomes a terminal trigger for this Flow itself (if Flow is nested).
                 this.triggers.push({
                     action,

@@ -16,6 +16,7 @@ export default tseslint.config(
             "@typescript-eslint/await-thenable": "error",
             "@typescript-eslint/no-explicit-any": "off",
             "@typescript-eslint/no-unused-expressions": "off",
+            "@typescript-eslint/no-empty-object-type": "off",
         },
     }
 );

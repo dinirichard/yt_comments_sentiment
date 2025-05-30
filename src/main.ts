@@ -1,18 +1,11 @@
 import {
-    // ansiColorFormatter,
     configure,
     getConsoleSink,
-    // getLevelFilter,
     getAnsiColorFormatter,
     withFilter,
     getLogger,
 } from "@logtape/logtape";
 import { getFileSink } from "@logtape/file";
-// import { getYoutubeInfo } from "./google.auth";
-// import * as utils from "./utils";
-// import { Database } from "./database";
-// import type { DuckDBResultReader } from "@duckdb/node-api/lib/DuckDBResultReader";
-// import type { YoutubeInfo } from "./comments.dto";
 import {
     CommentsEmbedsProcessing,
     ContentBatch,
@@ -20,13 +13,12 @@ import {
     GenerateHTML,
     ProcessContent,
     ProcessYoutubeURL,
-    SearchBatchNode,
-    TopicsSimilaritySearch,
+    testNode,
     type MyGlobal,
 } from "./flow";
-import { Flow, ParallelFlow } from "./pocket";
-import { Database } from "./database";
-// import type { Database } from "./database";
+import { DEFAULT_ACTION, Flow, ParallelFlow } from "./pocket";
+import { Database } from "./utils/database";
+import { PostVss, SearchBatchNode, TopicsSimilaritySearch } from "./vssNodes";
 
 const logger = getLogger(["Dbg", "App", "Main"]);
 
@@ -60,22 +52,33 @@ await (async () => {
     const db = await Database.create();
 
     try {
+        const memory: MyGlobal = {
+            db,
+            summary: false,
+        };
+
         const youtubeUrl = new ProcessYoutubeURL(
+            // "https://www.youtube.com/watch?v=bNdr10pE_20"
             "https://www.youtube.com/watch?v=Lfr2KvIS2nY"
             // "https://www.youtube.com/watch?v=mgoCr7STbh4"
         );
         const extractTopics = new ExtractTopicsAndQuestions();
         const commentsEmbedNode = new CommentsEmbedsProcessing();
-        youtubeUrl.next(extractTopics).next(commentsEmbedNode);
+        const summarizedNode = new testNode();
+        youtubeUrl.next(extractTopics, DEFAULT_ACTION).next(commentsEmbedNode);
+        youtubeUrl.next(summarizedNode, "summarized");
 
-        const preProccessFlow = new Flow(youtubeUrl);
+        const preProccessFlow = new Flow<MyGlobal, ["default", "summarized"]>(
+            youtubeUrl
+        );
 
         // * Similarity Search Flow
         const triggerSearchBatch = new SearchBatchNode();
         const topicsSimilaritySearch = new TopicsSimilaritySearch();
+        const postVss = new PostVss();
         triggerSearchBatch.on("process_one", topicsSimilaritySearch);
 
-        const parallelBatchFlow = new ParallelFlow(triggerSearchBatch, {
+        const similarityFlow = new ParallelFlow(triggerSearchBatch, {
             maxVisits: 5000000,
         });
 
@@ -93,17 +96,17 @@ await (async () => {
         const postProccessFlow = new Flow(htmlNode);
 
         // * Link Flows
-        preProccessFlow.next(parallelBatchFlow);
-        parallelBatchFlow.next(contentBatchFlow);
+        preProccessFlow.on(DEFAULT_ACTION, contentBatchFlow);
+        preProccessFlow.on("summarized", similarityFlow);
         contentBatchFlow.next(postProccessFlow);
+        similarityFlow.next(new Flow(postVss));
+        // parallelBatchFlow.next(contentBatchFlow);
 
         // Create the master flow, starting with the paymentFlow
         const masterPipeline = new Flow(preProccessFlow);
 
-        const memory: MyGlobal = {
-            db,
-        };
-        await masterPipeline.run(memory);
+        const triggers = await masterPipeline.run(memory);
+        logger.debug`Triggers opp: ${JSON.stringify(triggers)}`;
 
         db.close();
     } catch (error) {

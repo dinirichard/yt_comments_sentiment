@@ -1,18 +1,14 @@
 import { getLogger } from "@logtape/logtape";
-import { Node, DEFAULT_ACTION, Memory } from "./pocket";
-import * as utils from "./utils";
-import { Database } from "./database";
+import { Node, DEFAULT_ACTION, type Memory } from "./pocket";
+import * as utils from "./utils/utils";
+import { Database } from "./utils/database";
 import type { DuckDBResultReader } from "@duckdb/node-api/lib/DuckDBResultReader";
-import { getYoutubeInfo } from "./google.auth";
-import type { CommentData, YoutubeInfo } from "./comments.dto";
+import { getYoutubeInfo } from "./utils/google.auth";
+import type { CommentData, YoutubeInfo } from "./utils/comments.dto";
 import yaml from "yaml";
-import {
-    createBatchEmbeddings,
-    type ProcessedTopicResult,
-    type Section,
-} from "./utils";
+import { type ProcessedTopicResult, type Section } from "./utils/utils";
 import type { ContentEmbedding } from "@google/generative-ai";
-import type { DuckDBValue } from "@duckdb/node-api";
+import { callLLM, createBatchEmbeddings } from "./utils/llm";
 
 const logger = getLogger(["Dbg", "App", "Flw"]);
 
@@ -26,22 +22,25 @@ export type MyGlobal = {
     };
     videoId?: string;
     db: Database;
+    summary: boolean;
     pathSpecificData?: string;
     topics?: any[];
     commentsTopicMatch?: any[];
 };
-interface MyLocal {
-    pathSpecificData?: string;
-}
 
-export class ProcessYoutubeURL extends Node {
+export class ProcessYoutubeURL extends Node<
+    MyGlobal,
+    any,
+    any,
+    ["default", "summarized"]
+> {
     private url: string;
     constructor(url: string) {
         super();
         this.url = url;
     }
 
-    async prep(memory: Memory<MyGlobal, MyLocal>): Promise<any> {
+    async prep(memory: Memory<MyGlobal, any>): Promise<any> {
         logger.info`Setup database and process youtube url for video Id.`;
         const videoId = utils.retrieveVideoId(this.url);
         await memory.db.createTables();
@@ -49,11 +48,20 @@ export class ProcessYoutubeURL extends Node {
         const db: Database = memory.db;
 
         const videoSaved: DuckDBResultReader = await memory.db.queryGet(
-            `   SELECT 1
-                        FROM videos
-                        WHERE id = '${videoId}';
+            `   SELECT 
+                    v.htmlSummary,
+                FROM 
+                    videos v
+                WHERE 
+                    v.id = '${videoId}';
                     `
         );
+
+        const htmlSummary =
+            videoSaved.currentRowCount !== 1
+                ? null
+                : (videoSaved.getRows()[0][0] as string);
+        memory.summary = htmlSummary === "" || !htmlSummary ? false : true;
         return { videoId, videoSaved, db };
     }
 
@@ -136,25 +144,33 @@ export class ProcessYoutubeURL extends Node {
         return youtubeInfo;
     }
     async post(
-        memory: Memory<MyGlobal, MyLocal>,
+        memory: Memory<MyGlobal, any>,
         prepRes: any,
         execRes: YoutubeInfo
     ): Promise<void> {
         memory.youtubeInfo = execRes;
-        this.trigger(DEFAULT_ACTION);
+        this.trigger(
+            (memory.summary as boolean) ? "summarized" : DEFAULT_ACTION
+        );
     }
 }
 
-export class ExtractTopicsAndQuestions extends Node {
-    prep(memory: Memory<MyGlobal, MyLocal>): Promise<string> {
+export class ExtractTopicsAndQuestions extends Node<
+    MyGlobal,
+    any,
+    any,
+    ["default", "summarized"]
+> {
+    prep(memory: Memory<MyGlobal, {}>): Promise<string> {
+        logger.info`Starting  Transcript embeddings.`;
         const prompt: string = `
             You are an expert content analyzer. Given a YouTube video transcript, identify at least 2 or more most interesting topics discussed and generate at most 3 most thought-provoking questions for each topic.
             These questions don't need to be directly asked in the video. It's good to have clarification questions.
 
-            VIDEO TITLE: ${memory.youtubeInfo.title}
+            VIDEO TITLE: ${memory.youtubeInfo!.videoTitle}
 
             TRANSCRIPT:
-            ${memory.youtubeInfo.transcript}
+            ${memory.youtubeInfo!.transcript}
 
             Format your response in YAML:
 
@@ -178,7 +194,7 @@ export class ExtractTopicsAndQuestions extends Node {
     }
 
     async exec(prepRes: string): Promise<any> {
-        const response = await utils.callLLM(prepRes);
+        const response = await callLLM(prepRes);
         logger.debug`llm response: ${response}`;
         const yamlContent = utils.extractYamlContent(response);
 
@@ -201,7 +217,7 @@ export class ExtractTopicsAndQuestions extends Node {
     }
 
     async post(
-        memory: Memory<MyGlobal, MyLocal>,
+        memory: Memory<MyGlobal, any>,
         prepRes: any,
         execRes: {
             parsed: any;
@@ -294,9 +310,14 @@ export class ExtractTopicsAndQuestions extends Node {
     }
 }
 
-export class CommentsEmbedsProcessing extends Node {
-    async prep(memory: Memory<MyGlobal, MyLocal>): Promise<any> {
-        logger.info`Starting  transcript embeddings.`;
+export class CommentsEmbedsProcessing extends Node<
+    MyGlobal,
+    any,
+    any,
+    ["default", "summarized"]
+> {
+    async prep(memory: Memory<MyGlobal, any>): Promise<any> {
+        logger.info`Starting  Comments embeddings.`;
         const transEmbedTable: DuckDBResultReader = await memory.db.queryGet(
             `SELECT commentId, textDisplay
                     FROM comments
@@ -371,7 +392,7 @@ export class CommentsEmbedsProcessing extends Node {
         return commentEmbeddings;
     }
     async post(
-        memory: Memory<MyGlobal, MyLocal>,
+        memory: Memory<MyGlobal, any>,
         prepRes: any,
         execRes: ContentEmbedding[]
     ): Promise<void> {
@@ -409,105 +430,32 @@ export class CommentsEmbedsProcessing extends Node {
     }
 }
 
-export class TopicsSimilaritySearch extends Node<MyGlobal, MyLocal> {
-    async prep(memory: Memory<MyGlobal, MyLocal>): Promise<any> {
-        // logger.info`TopicsSimilaritySearch begins.`;
-        // logger.debug`Flow Params: \n${memory.item_data[0]} : ${memory.item_data[2]}`;
-
-        const commentsTopicsMatch: DuckDBResultReader =
-            await memory.db.queryGet(
-                `   
-                    SELECT id, parentId, text, embedding
-                    FROM transcripts_embeddings
-                    WHERE videoId = '${memory.videoId}'
-                    ORDER BY array_cosine_distance(embedding::FLOAT[768], ARRAY[${memory.item_data[1].items}]::FLOAT[768])
-                    LIMIT ${memory.vssLimit};
-            `
-            );
-
-        const commentsTopics = commentsTopicsMatch.getRows();
-
-        // logger.debug`commentsTopics: ${commentsTopics}`;
-        // logger.debug`commentsTopics Text: ${commentsTopics[2]}`;
-
-        commentsTopics.map((topics) => {
-            return [topics[0], topics[2]];
-        });
-
-        return {
-            commentsTopics,
-            commentId: memory.item_data[0],
-            commentText: memory.item_data[2],
-        };
+export class testNode extends Node<
+    MyGlobal,
+    any,
+    any,
+    ["default", "summarized"]
+> {
+    async prep(memory: Memory<MyGlobal, {}>): Promise<void> {
+        logger.info`-----TEST NODE----`;
     }
-    async exec(
-        prepRes: any
-    ): Promise<{ similarTopics: any; commentId: any; commentText: any }> {
-        return {
-            similarTopics: prepRes.commentsTopics,
-            commentId: prepRes.commentId,
-            commentText: prepRes.commentText,
-        };
-    }
+    async exec(prepRes: any): Promise<any> {}
 
     async post(
-        memory: Memory<MyGlobal, MyLocal>,
+        memory: Memory<MyGlobal, {}>,
         prepRes: any,
         execRes: any
     ): Promise<void> {
-        memory.commentsTopicMatch[memory.item_index] = execRes;
-        // logger.debug`Combined Result: ${execRes}`;
-    }
-}
-
-export class SearchBatchNode extends Node<
-    MyGlobal,
-    MyLocal,
-    ["process_one", "aggregate"]
-> {
-    async prep(memory: Memory<MyGlobal, MyLocal>): Promise<any[]> {
-        // There is no way this would complete in 3 seconds without concurrency
-        logger.info`SearchBatchFlow creating comments_embeddings batches.`;
-        const commEmbedTable: DuckDBResultReader = await memory.db.queryGet(
-            `   
-                    SELECT ce.commentId, ce.embedding, c.textDisplay
-                    FROM comments_embeddings ce
-                    LEFT JOIN
-                        comments c ON ce.commentId = c.commentId
-                    WHERE ce.videoId = '${memory.videoId}';
-            `
-        );
-        const commEmbedd = commEmbedTable.getRows();
-        logger.debug`commEmbedd length: ${commEmbedd.length}`;
-
-        // logger.debug`commEmbedd Text: ${commEmbedd.map((sd) => sd[2])}`;
-
-        return commEmbedd;
-    }
-
-    async post(
-        memory: Memory<MyGlobal, MyLocal>,
-        items: DuckDBValue[][]
-    ): Promise<void> {
-        logger.info`TopicsSimilaritySearch begins.`;
-        const vssLimit = 1;
-        memory.commentsTopicMatch = new Array(items.length).fill(null); // Pre-allocate
-        items.forEach((item, index) => {
-            this.trigger("process_one", {
-                item_data: item,
-                item_index: index,
-                vssLimit,
-            });
-        });
+        this.trigger("summarized");
     }
 }
 
 export class ContentBatch extends Node<
     MyGlobal,
-    MyLocal,
+    {},
     ["process_one", "aggregate"]
 > {
-    async prep(memory: Memory<MyGlobal, MyLocal>): Promise<any[]> {
+    async prep(memory: Memory<MyGlobal, any>): Promise<any[]> {
         // There is no way this would complete in 3 seconds without concurrency
         logger.info`ContentBatchFlow creating topics and questions batches.`;
         const transEmbedTable: DuckDBResultReader = await memory.db.queryGet(
@@ -543,11 +491,11 @@ export class ContentBatch extends Node<
     }
 
     async post(
-        memory: Memory<MyGlobal, MyLocal>,
+        memory: Memory<MyGlobal, any>,
         prepResList: Section[]
     ): Promise<void> {
         memory.topics = new Array(prepResList.length).fill(null);
-        memory.local.topic = new Array(prepResList.length).fill(null);
+        // memory.local.topic = new Array(prepResList.length).fill(null);
 
         prepResList.forEach((section, index) => {
             this.trigger("process_one", {
@@ -558,9 +506,9 @@ export class ContentBatch extends Node<
     }
 }
 
-export class ProcessContent extends Node<MyGlobal, MyLocal> {
-    async prep(memory: Memory<MyGlobal, MyLocal>): Promise<any> {
-        logger.debug`ProcessContent prep Result 1: ${memory.section_data}`;
+export class ProcessContent extends Node<MyGlobal, any> {
+    async prep(memory: Memory<MyGlobal, any>): Promise<any> {
+        // logger.debug`ProcessContent prep Result 1: ${memory.section_data}`;
         const topicTitle: string = memory.section_data.title;
         // Extract only the original question strings from the input
         const originalQuestions = memory.section_data.questions.map(
@@ -613,7 +561,7 @@ export class ProcessContent extends Node<MyGlobal, MyLocal> {
         return [prompt, topicTitle, memory.section_index];
     }
     async exec(prepRes: [string, string, number]): Promise<any> {
-        const response = await utils.callLLM(prepRes[0]);
+        const response = await callLLM(prepRes[0]);
         // logger.debug`llm response: ${response}`;
         const yamlContent = utils.extractYamlContent(response);
 
@@ -630,20 +578,20 @@ export class ProcessContent extends Node<MyGlobal, MyLocal> {
     }
 
     async post(
-        memory: Memory<MyGlobal, MyLocal>,
+        memory: Memory<MyGlobal, any>,
         prepRes: any,
         execRes: any
     ): Promise<void> {
         memory.topics[prepRes[2]] = execRes;
-        memory.local.topic[prepRes[2]] = execRes;
+        // memory.local.topic[prepRes[2]] = execRes;
         // logger.debug`ProcessContent Result: ${memory.topics}`;
         // throw new Error("Method not implemented.");
-        this.trigger(DEFAULT_ACTION, { topics: memory.local.topic });
+        // this.trigger(DEFAULT_ACTION, { topics: memory.local.topic });
     }
 }
 
-export class GenerateHTML extends Node<MyGlobal, MyLocal> {
-    async prep(memory: Memory<MyGlobal, MyLocal>): Promise<any> {
+export class GenerateHTML extends Node<MyGlobal, any> {
+    async prep(memory: Memory<MyGlobal, any>): Promise<any> {
         logger.info`GenerateHTML generating and saving HTML file.`;
         logger.debug`GenerateHTML Mem Topics : ${memory.topics}`;
         return [
@@ -654,7 +602,7 @@ export class GenerateHTML extends Node<MyGlobal, MyLocal> {
         ];
     }
     async exec(prepRes: any[]): Promise<string> {
-        const htmlContent = utils.htmlGenerator(
+        const htmlContent = utils.htmlSummaryGenerator(
             prepRes[0],
             prepRes[1],
             prepRes[2],
@@ -666,7 +614,7 @@ export class GenerateHTML extends Node<MyGlobal, MyLocal> {
     }
 
     async post(
-        memory: Memory<MyGlobal, MyLocal>,
+        memory: Memory<MyGlobal, any>,
         prepRes: any[],
         execRes: string
     ): Promise<void> {

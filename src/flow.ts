@@ -4,11 +4,16 @@ import * as utils from "./utils/utils";
 import { Database } from "./utils/database";
 import type { DuckDBResultReader } from "@duckdb/node-api/lib/DuckDBResultReader";
 import { getYoutubeInfo } from "./utils/google.auth";
-import type { CommentData, YoutubeInfo } from "./utils/comments.dto";
+import type {
+    CommentData,
+    VssComments,
+    YoutubeInfo,
+} from "./utils/comments.dto";
 import yaml from "yaml";
 import { type ProcessedTopicResult, type Section } from "./utils/utils";
 import type { ContentEmbedding } from "@google/generative-ai";
 import { callLLM, createBatchEmbeddings } from "./utils/llm";
+import { htmlSummaryGenerator } from "./utils/html";
 
 const logger = getLogger(["Dbg", "App", "Flw"]);
 
@@ -25,7 +30,7 @@ export type MyGlobal = {
     summary: boolean;
     pathSpecificData?: string;
     topics?: any[];
-    commentsTopicMatch?: any[];
+    commentsTopicMatch?: VssComments[];
 };
 
 export class ProcessYoutubeURL extends Node<
@@ -602,7 +607,7 @@ export class GenerateHTML extends Node<MyGlobal, any> {
         ];
     }
     async exec(prepRes: any[]): Promise<string> {
-        const htmlContent = utils.htmlSummaryGenerator(
+        const htmlContent = htmlSummaryGenerator(
             prepRes[0],
             prepRes[1],
             prepRes[2],

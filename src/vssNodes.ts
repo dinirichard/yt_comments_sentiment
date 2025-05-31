@@ -7,13 +7,11 @@ import {
     // DEFAULT_ACTION,
     type Memory,
 } from "./pocket";
-// import * as utils from "./utils";
+import type { ProcessedComments, VssComments } from "./utils/comments.dto";
+import { createFile } from "./utils/utils";
+import { htmlVssGenerator } from "./utils/html";
 
 const logger = getLogger(["Dbg", "App", "Vss"]);
-
-// interface MyLocal {
-//     pathSpecificData?: string;
-// }
 
 export class SearchBatchNode extends Node<
     MyGlobal,
@@ -68,7 +66,7 @@ export class TopicsSimilaritySearch extends Node<MyGlobal, any> {
         const commentsTopicsMatch: DuckDBResultReader =
             await memory.db.queryGet(
                 `   
-                    SELECT ce.commentId, ce.embedding, c.textDisplay
+                    SELECT ce.commentId, ce.embedding, c.textDisplay, c.parentId, c.likeCount
                     FROM comments_embeddings ce
                     LEFT JOIN
                         comments c ON ce.commentId = c.commentId
@@ -78,30 +76,32 @@ export class TopicsSimilaritySearch extends Node<MyGlobal, any> {
             `
             );
 
-        let commentsTopics = commentsTopicsMatch.getRows();
+        const commentsTopics = commentsTopicsMatch.getRows();
 
         // logger.debug`commentsTopics: ${commentsTopics}`;
 
-        commentsTopics = commentsTopics.map((topics) => {
-            return [topics[0], topics[2]];
+        const commentsTopicsr = commentsTopics.map((topics) => {
+            return {
+                id: topics[0],
+                textDisplay: topics[2],
+                parentId: topics[3],
+                likeCount: topics[4],
+            } as ProcessedComments;
+            // return [topics[0], topics[2]];
         });
 
         return {
-            comments: commentsTopics,
+            comments: commentsTopicsr,
             topicTranscriptId: memory.item_data[0],
             topicText: memory.item_data[2],
         };
     }
-    async exec(prepRes: any): Promise<{
-        similarComments: any;
-        topicTranscriptId: any;
-        topicText: any;
-    }> {
+    async exec(prepRes: any): Promise<VssComments> {
         return {
             similarComments: prepRes.comments,
             topicTranscriptId: prepRes.topicTranscriptId,
             topicText: prepRes.topicText,
-        };
+        } as VssComments;
     }
 
     async post(
@@ -114,17 +114,78 @@ export class TopicsSimilaritySearch extends Node<MyGlobal, any> {
 }
 
 export class PostVss extends Node<MyGlobal, any, any, any> {
-    async prep(memory: Memory<MyGlobal, any>): Promise<void> {
+    async prep(memory: Memory<MyGlobal, {}>): Promise<any> {
         logger.info`-----POST VSS----`;
 
-        // logger.debug`Matches (): \n${memory.commentsTopicMatch.filter(
-        //     (x: any) => x !== null
-        // )}`;
-        logger.debug`Matches (): \n${JSON.stringify(memory.commentsTopicMatch)}`;
-    }
-    async exec(): Promise<any> {}
+        // logger.debug`Matches (): \n${JSON.stringify(memory.commentsTopicMatch)}`;
+        const vssComments: VssComments[] = memory.commentsTopicMatch!;
 
-    async post(): Promise<void> {
+        const commentsTable: DuckDBResultReader = await memory.db.queryGet(
+            `   
+                    SELECT commentId, textDisplay, parentId, likeCount,
+                    FROM comments
+                    WHERE videoId = '${memory.videoId}';
+            `
+        );
+
+        const allComments = commentsTable.getRows();
+        // logger.debug`Matches (): \n${vssComments}`;
+
+        vssComments.forEach((vssComment: VssComments) => {
+            vssComment.similarComments.forEach(
+                (parentComments: ProcessedComments) => {
+                    const childComments: ProcessedComments[] = allComments
+                        .filter((c) => c[2] === parentComments.id)
+                        .map((c) => {
+                            return {
+                                id: c[0],
+                                textDisplay: c[1],
+                                parentId: c[2],
+                                likeCount: c[3],
+                            } as ProcessedComments;
+                        });
+                    parentComments.replies = childComments;
+                    return parentComments;
+                }
+            );
+            return vssComment;
+        });
+
+        logger.debug`Matches (): \n${JSON.stringify(vssComments)}`;
+        return {
+            VideoTitle: memory.youtubeInfo?.videoTitle,
+            imageUrl: memory.youtubeInfo?.thumbnailUrl,
+            videoId: memory.videoId,
+            vssComments,
+        };
+    }
+    async exec(prepRes: {
+        VideoTitle: string;
+        imageUrl: string;
+        videoId: string;
+        vssComments: VssComments[];
+    }): Promise<any> {
+        const htmlContent = htmlVssGenerator(
+            prepRes.VideoTitle,
+            prepRes.imageUrl,
+            prepRes.videoId,
+            prepRes.vssComments
+        );
+
+        return htmlContent;
+    }
+
+    async post(
+        memory: Memory<MyGlobal, any>,
+        prepRes: any,
+        execRes: string
+    ): Promise<void> {
+        let videoPath: string =
+            "./summaries/comments/" + prepRes.VideoTitle + ".html";
+        videoPath = videoPath.replaceAll(" ", "_");
+
+        await createFile(execRes, videoPath);
+
         // this.trigger("summarized");
     }
 }

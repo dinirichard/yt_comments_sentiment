@@ -105,8 +105,9 @@ await (async () => {
         // Create the master flow, starting with the paymentFlow
         const masterPipeline = new Flow(preProccessFlow);
 
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const triggers = await masterPipeline.run(memory);
-        logger.debug`Triggers opp: ${JSON.stringify(triggers)}`;
+        // logger.debug`Triggers opp: ${JSON.stringify(triggers)}`;
 
         db.close();
     } catch (error) {

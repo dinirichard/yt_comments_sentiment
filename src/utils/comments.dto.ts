@@ -1,3 +1,22 @@
+export interface VssComments {
+    similarComments: ProcessedComments[];
+    topicTranscriptId: string;
+    topicText: string;
+}
+
+export interface ProcessedComments {
+    id: string;
+    textDisplay: string;
+    parentId?: string;
+    likeCount: number;
+    replies?: {
+        id: string;
+        textDisplay: string;
+        parentId?: string;
+        likeCount: number;
+    }[];
+}
+
 export interface AuthorChannelId {
     value: string;
 }
